@@ -38,6 +38,7 @@ static NSMutableArray *channels = nil;
 
 static NSString *backupPath = nil;
 static NSString *plistPath = nil;
+static NSString *configPath = nil;
 static NSString *originalImagePath = nil;
 static NSString *outputPath = nil;
 static struct Channel empty = {0,};
@@ -148,6 +149,9 @@ int main(int argc, const char * argv[])
                                 originalImagePath = [projectPath stringByAppendingFormat:@"/%@",path];
                             }
                         }
+                        if ([[path lastPathComponent] rangeOfString:@"Config.h"].location != NSNotFound) {
+                            configPath = [NSString stringWithFormat:@"%@/%@",projectPath,path];
+                        }
                         
                         if ([[path lastPathComponent] rangeOfString:@"Icon@2x.png"].location != NSNotFound ||
                             [[path lastPathComponent] rangeOfString:@"Icon-small@2x.png"].location != NSNotFound ||
@@ -198,11 +202,14 @@ int main(int argc, const char * argv[])
                                     if (setChannelConfig(channel)) {
                                         NSString *displayName = [NSString stringWithUTF8String:channel.displayName];
                                         outputPath = [NSString stringWithFormat:@"%@/%@.ipa",fullPath,displayName];
+                                        NSLog(@"‼️‼️‼️‼️‼️‼️‼️‼️‼️\n************Info************\nProject:%@\nChannel:%@\nAppSign:%@\n****************************",
+                                              project,
+                                              [NSString stringWithUTF8String:channel.displayName],
+                                              [NSString stringWithUTF8String:channel.appSign]);
                                         distributeProject(projectPath,project,workspace,scheme);
                                         recoveryChannelConfig();
                                     }
                                 }
-                                
                             }
                         }
                         else {
@@ -266,8 +273,6 @@ void distributeProject(NSString *projectPath,NSString *projectName,NSString *wor
         command = [NSString stringWithFormat:
                    @"xcodebuild -project %@ -sdk %@ clean build|grep Validate |awk '{print $2}'",projectName,buildSdk];
     }
-    
-    NSLog(@"‼️‼️‼️‼️‼️‼️‼️‼️‼️");
     NSLog(@"Packing ipa wait a moment...");
     if (command.length > 0) {
         NSString *appPath = runCommand(command, projectPath);
@@ -302,7 +307,10 @@ void listHelpInfo()
     NSLog(@"%@",
           @"\n//////////////////SSDisTool////////////////////\n"
           "// * -d 发布命令，后面接工程目录参数\n"
-          "//      -s 配置渠道信息（强定制化），后面接配置目录\n"
+          "//      -s 配置渠道信息（强定制化），后面接配置目录。\n"
+          "//         当需要使用渠道配置时，Info-plist里面的CFBundleDisplayName（Bundle display name）不能为系统默认的宏\n"
+          "//         PlistBuddy 不支持\n"
+          "//         修改appSign，sed命令会重新创建一个新Config.h文件，并且以新时间覆盖。此时版本控制会提示修改，revert即可\n"
           "// * -a for analyze project and output in shell window\n"
           "// * -u for unit test prject and output\n"
           "// * -h for help information\n"
@@ -436,7 +444,6 @@ NSString *trim(NSString *originalString)
 BOOL setChannelConfig(struct Channel channel)
 {
     //backup
-    
     if (backupPath.length > 0) {
         BOOL isDir = NO;
         if (![[NSFileManager defaultManager] fileExistsAtPath:backupPath isDirectory:&isDir]) {
@@ -460,6 +467,7 @@ BOOL setChannelConfig(struct Channel channel)
         }
     }
     
+    //backup icon
     if (array.count == 4) {
         for (NSString *path in array) {
             if (path.length > 0) {
@@ -472,9 +480,21 @@ BOOL setChannelConfig(struct Channel channel)
         return NO;
     }
     
+    //backup dispalyName
     if (plistPath.length > 0) {
         NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Print CFBundleDisplayName\" \"%@\"",plistPath];
         original.displayName = [trim(runCommand(command, nil)) UTF8String];
+    }
+    else {
+        return NO;
+    }
+    
+    //backup appsign
+    if (configPath.length > 0) {
+        NSString *command = [NSString stringWithFormat:
+                             @"cat %@ |grep \"#define kAppSign\"|sed \'s/#define kAppSign @\"\\(.*\\)\"/\\1/g\'",
+                             configPath];
+        original.appSign = [trim(runCommand(command, nil)) UTF8String];
     }
     else {
         return NO;
@@ -491,6 +511,7 @@ BOOL setChannelConfig(struct Channel channel)
         }
     }
     
+    //set icon
     if (array.count == 4) {
         for (NSString *path in array) {
             if (path.length > 0) {
@@ -500,10 +521,19 @@ BOOL setChannelConfig(struct Channel channel)
         }
     }
     
+    //set plist
     if (plistPath.length > 0) {
         NSString *displayName = [NSString stringWithUTF8String:channel.displayName];
         NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Set :CFBundleDisplayName %@\" \"%@\"",
                              displayName,plistPath];
+        runCommand(command, nil);
+    }
+    
+    //set appSign
+    if (configPath.length > 0) {
+        NSString *oldSign = [NSString stringWithUTF8String:original.appSign];
+        NSString *newSign = [NSString stringWithUTF8String:channel.appSign];
+        NSString *command = [NSString stringWithFormat:@"sed -ie 's/%@/%@/g' %@",oldSign,newSign,configPath];
         runCommand(command, nil);
     }
     
@@ -533,9 +563,26 @@ void recoveryChannelConfig()
     
     if (plistPath.length > 0) {
         NSString *displayName = [NSString stringWithUTF8String:original.displayName];
-        NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Set :CFBundleDisplayName %@\" \"%@\"",
+        NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Set :CFBundleDisplayName '%@'\" \"%@\"",
                              displayName,plistPath];
         runCommand(command, nil);
+    }
+    
+    if (configPath.length > 0) {
+        NSString *command = [NSString stringWithFormat:
+                             @"cat %@ |grep \"#define kAppSign\"|sed \'s/#define kAppSign @\"\\(.*\\)\"/\\1/g\'",
+                             configPath];
+        NSString *oldSign = trim(runCommand(command, nil));
+        
+        NSString *newSign = [NSString stringWithUTF8String:original.appSign];
+        command = [NSString stringWithFormat:@"sed -ie 's/%@/%@/g' %@",oldSign,newSign,configPath];
+        runCommand(command, nil);
+    }
+    
+    //去掉sed命令的备份文件
+    NSString *path = [NSString stringWithFormat:@"%@e",configPath];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
     }
 }
 
