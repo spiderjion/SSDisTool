@@ -515,7 +515,7 @@ BOOL setChannelConfig(struct Channel channel)
     if (array.count == 4) {
         for (NSString *path in array) {
             if (path.length > 0) {
-                NSString *command = [NSString stringWithFormat:@"mv %@ %@",path,originalImagePath];
+                NSString *command = [NSString stringWithFormat:@"cp %@ %@",path,originalImagePath];
                 runCommand(command, nil);
             }
         }
