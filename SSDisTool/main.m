@@ -26,6 +26,7 @@ static NSString *const kAppSignKey = @"appSign";
 struct Channel {
     const char *displayName;
     const char *appSign;
+    const char *pathName;
     
     char iconPaths[2048];
 };
@@ -52,6 +53,7 @@ NSString *runCommand(NSString *commandToRun, NSString *path);
 NSString *trim(NSString *originalString);
 BOOL setChannelConfig(struct Channel channel);
 void recoveryChannelConfig();
+BOOL isChannelReiterant(struct Channel channel);
 
 #pragma mark Public
 /**
@@ -79,7 +81,6 @@ void setupCustomConfig(NSString *settingPath);
 
 int main(int argc, const char * argv[])
 {
-
     @autoreleasepool {
         
         // insert code here...
@@ -122,7 +123,7 @@ int main(int argc, const char * argv[])
                     if ([path rangeOfString:@".svn"].location != NSNotFound ||
                         [path rangeOfString:@".git"].location != NSNotFound ||
                         [path rangeOfString:@"Pods"].location != NSNotFound ||
-                        [path rangeOfString:@"XYTTests"].location != NSNotFound) continue;
+                        [path rangeOfString:@"Tests"].location != NSNotFound) continue;
                     
                     if (([path rangeOfString:@".xcworkspacedata"].location != NSNotFound ||
                          [path rangeOfString:@"xcshareddata"].location != NSNotFound ||
@@ -195,6 +196,7 @@ int main(int argc, const char * argv[])
                         
                         if (channels.count > 0 && backupPath.length > 0) {
                             for (NSValue *values in channels) {
+                                
                                 struct Channel channel = {0,};
                                 [values getValue:&channel];
                                 
@@ -286,6 +288,10 @@ void distributeProject(NSString *projectPath,NSString *projectName,NSString *wor
         //TODO 保存dSYM文件
         
         //打包ipa
+        if (outputPath.length == 0) {
+            outputPath = [NSString stringWithUTF8String:fullPathWithPath("~/Desktop/auto_packing.ipa")];
+        }
+        
         command = [NSString stringWithFormat:@"xcrun -sdk %@ PackageApplication -o %@ -v %@",trim(sdk),outputPath,appPath];
         runCommand(command, nil);
     }
@@ -340,12 +346,13 @@ void setupCustomConfig(NSString *settingPath)
     while (path = [enumerator nextObject]) {
         
         if ([path rangeOfString:@".DS_Store"].location != NSNotFound ||
-            [[path lastPathComponent] rangeOfString:@"SSDisTool"].location != NSNotFound) continue;
+            [[path lastPathComponent] rangeOfString:@"SSDisTool"].location != NSNotFound ||
+            [[path lastPathComponent] rangeOfString:@"backup"].location != NSNotFound) continue;
         
         if ([path rangeOfString:@"/"].location == NSNotFound) {
             localName = path;
             channel = empty;
-            channel.displayName = [localName UTF8String];
+            channel.pathName = [localName UTF8String];
             complate = 1;
         }
         int result = memcmp(&channel, &empty, sizeof(channel));
@@ -386,7 +393,12 @@ void setupCustomConfig(NSString *settingPath)
                 }
                 
                 if ((complate & 32) != 0) {
-                    [channels addObject:[NSValue value:&channel withObjCType:@encode(struct Channel)]];
+                    if (!isChannelReiterant(channel)) {
+                        [channels addObject:[NSValue value:&channel withObjCType:@encode(struct Channel)]];
+                    }
+                    else {
+                        exit(EXIT_FAILURE);
+                    }
                 }
             }
         }
@@ -584,6 +596,34 @@ void recoveryChannelConfig()
     if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
     }
+}
+
+BOOL isChannelReiterant(struct Channel channel)
+{
+    struct Channel storeChannel = channel;
+    if (channels.count > 0) {
+        for (NSValue *value in channels) {
+            struct Channel cl = {0,};
+            [value getValue:&cl];
+            
+            if ([[NSString stringWithUTF8String:cl.displayName] isEqualToString:[NSString stringWithUTF8String:storeChannel.displayName]] &&
+                [[NSString stringWithUTF8String:cl.appSign] isEqualToString:[NSString stringWithUTF8String:storeChannel.appSign]]) {
+                
+                NSLog(@"\n‼️‼️‼️‼️重复配置‼️‼️‼️‼️\n"
+                      "///////information////////\n"
+                      "//path:%@\n"
+                      "//path:%@\n"
+                      "//里面的setting.plist配置重复，\n"
+                      "//请检查后重新运行脚本\n"
+                      "//////////////////////////",
+                      [NSString stringWithUTF8String:cl.pathName],
+                      [NSString stringWithUTF8String:storeChannel.pathName]);
+                
+                return YES;
+            }
+        }
+    }
+    return NO;
 }
 
 #pragma mark - Keychain
