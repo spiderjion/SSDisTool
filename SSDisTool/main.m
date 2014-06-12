@@ -145,7 +145,8 @@ int main(int argc, const char * argv[])
                         if ([[path lastPathComponent] rangeOfString:@"Info.plist"].location != NSNotFound) {
                             plistPath = [NSString stringWithFormat:@"%@/%@",projectPath,path];
                         }
-                        if ([[path lastPathComponent] rangeOfString:@"icon"].location != NSNotFound) {
+                        if ([[path lastPathComponent] rangeOfString:@"icon"].location != NSNotFound &&
+                            [[path lastPathComponent] rangeOfString:@"."].location == NSNotFound) {
                             if (!originalImagePath) {
                                 originalImagePath = [projectPath stringByAppendingFormat:@"/%@",path];
                             }
@@ -294,8 +295,12 @@ void distributeProject(NSString *projectPath,NSString *projectName,NSString *wor
         
         command = [NSString stringWithFormat:@"xcrun -sdk %@ PackageApplication -o %@ -v %@",trim(sdk),outputPath,appPath];
         runCommand(command, nil);
+        
+        NSLog(@"End packing ipa,\npath:%@.",outputPath);
     }
-    NSLog(@"End packing ipa.");
+    else {
+        NSLog(@"Get workspaceName、scheme or projectName Error.");
+    }
 }
 
 void analyzeProject()
@@ -331,7 +336,7 @@ void setupCustomConfig(NSString *settingPath)
 {
     BOOL isDir = NO;
     if (![[NSFileManager defaultManager] fileExistsAtPath:settingPath isDirectory:&isDir] && isDir) {
-        NSLog(@"the path \"%@\" is not exist or is not a directory",settingPath);
+        NSLog(@"the path \"%@\" is not exist",settingPath);
         return;
     }
     
@@ -355,6 +360,7 @@ void setupCustomConfig(NSString *settingPath)
             channel.pathName = [localName UTF8String];
             complate = 1;
         }
+        
         int result = memcmp(&channel, &empty, sizeof(channel));
         if (localName.length > 0 && result > 0) {
             if ([path rangeOfString:localName].location != NSNotFound) {
@@ -455,41 +461,46 @@ NSString *trim(NSString *originalString)
 
 BOOL setChannelConfig(struct Channel channel)
 {
-    //backup
-    if (backupPath.length > 0) {
-        BOOL isDir = NO;
-        if (![[NSFileManager defaultManager] fileExistsAtPath:backupPath isDirectory:&isDir]) {
-            NSLog(@"the path \"%@\" is not exist or is not a directory",backupPath);
-            NSString *command = [NSString stringWithFormat:@"mkdir %@/",backupPath];
-            runCommand(command, nil);
-        }
-    }
-    else {
-        NSLog(@"There is not backupPath");
-        return NO;
-    }
-    
-    NSString *paths = [NSString stringWithUTF8String:original.iconPaths];
-    NSMutableArray *array = [[paths componentsSeparatedByString:@"|"] mutableCopy];
-    
-    //过滤掉空字符串
-    for (NSInteger i = array.count-1; i>=0; i--) {
-        if ([array[i] length] == 0) {
-            [array removeObjectAtIndex:i];
-        }
-    }
-    
-    //backup icon
-    if (array.count == 4) {
-        for (NSString *path in array) {
-            if (path.length > 0) {
-                NSString *command = [NSString stringWithFormat:@"cp %@ %@",path,backupPath];
+    NSString *paths = nil;
+    NSMutableArray *array = nil;
+    if ([NSString stringWithUTF8String:channel.iconPaths].length > 0) {
+        
+        //backup
+        if (backupPath.length > 0) {
+            BOOL isDir = NO;
+            if (![[NSFileManager defaultManager] fileExistsAtPath:backupPath isDirectory:&isDir]) {
+                NSLog(@"the path \"%@\" is not exist or is not a directory",backupPath);
+                NSString *command = [NSString stringWithFormat:@"mkdir %@/",backupPath];
                 runCommand(command, nil);
             }
         }
-    }
-    else {
-        return NO;
+        else {
+            NSLog(@"There is not backupPath");
+            return NO;
+        }
+        
+        paths = [NSString stringWithUTF8String:original.iconPaths];
+        array = [[paths componentsSeparatedByString:@"|"] mutableCopy];
+        
+        //过滤掉空字符串
+        for (NSInteger i = array.count-1; i>=0; i--) {
+            if ([array[i] length] == 0) {
+                [array removeObjectAtIndex:i];
+            }
+        }
+        
+        //backup icon
+        if (array.count == 4) {
+            for (NSString *path in array) {
+                if (path.length > 0) {
+                    NSString *command = [NSString stringWithFormat:@"cp %@ %@",path,backupPath];
+                    runCommand(command, nil);
+                }
+            }
+        }
+        else {
+            return NO;
+        }
     }
     
     //backup dispalyName
@@ -568,8 +579,10 @@ void recoveryChannelConfig()
     for (NSString *path in array) {
         if (path.length > 0) {
             NSString *backupImagePath = [NSString stringWithFormat:@"%@/%@",backupPath,[path lastPathComponent]];
-            NSString *command = [NSString stringWithFormat:@"mv %@ %@",backupImagePath,originalImagePath];
-            runCommand(command, nil);
+            if ([[NSFileManager defaultManager] fileExistsAtPath:backupImagePath]) {
+                NSString *command = [NSString stringWithFormat:@"mv %@ %@",backupImagePath,originalImagePath];
+                runCommand(command, nil);
+            }
         }
     }
     
@@ -595,6 +608,11 @@ void recoveryChannelConfig()
     NSString *path = [NSString stringWithFormat:@"%@e",configPath];
     if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    }
+    
+    //去掉backup文件夹
+    if ([[NSFileManager defaultManager] fileExistsAtPath:backupPath]) {
+        [[NSFileManager defaultManager] removeItemAtPath:backupPath error:nil];
     }
 }
 
