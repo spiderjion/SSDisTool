@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		EB5689E7194E845400F06506 /* Model.m in Sources */ = {isa = PBXBuildFile; fileRef = EB5689E6194E845400F06506 /* Model.m */; };
+		EB5689EA194E8B2000F06506 /* NSString+Extra.m in Sources */ = {isa = PBXBuildFile; fileRef = EB5689E9194E8B2000F06506 /* NSString+Extra.m */; };
+		EB5689ED194E8BF500F06506 /* NSArray+Extra.m in Sources */ = {isa = PBXBuildFile; fileRef = EB5689EC194E8BF500F06506 /* NSArray+Extra.m */; };
 		EBFC29641939CA6D00A780B6 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EBFC29631939CA6D00A780B6 /* Foundation.framework */; };
 		EBFC29671939CA6D00A780B6 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = EBFC29661939CA6D00A780B6 /* main.m */; };
 		EBFC296B1939CA6E00A780B6 /* SSDisTool.1 in CopyFiles */ = {isa = PBXBuildFile; fileRef = EBFC296A1939CA6E00A780B6 /* SSDisTool.1 */; };
@@ -26,6 +29,12 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		EB5689E5194E845400F06506 /* Model.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Model.h; sourceTree = "<group>"; };
+		EB5689E6194E845400F06506 /* Model.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = Model.m; sourceTree = "<group>"; };
+		EB5689E8194E8B2000F06506 /* NSString+Extra.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSString+Extra.h"; sourceTree = "<group>"; };
+		EB5689E9194E8B2000F06506 /* NSString+Extra.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "NSString+Extra.m"; sourceTree = "<group>"; };
+		EB5689EB194E8BF500F06506 /* NSArray+Extra.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSArray+Extra.h"; sourceTree = "<group>"; };
+		EB5689EC194E8BF500F06506 /* NSArray+Extra.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "NSArray+Extra.m"; sourceTree = "<group>"; };
 		EBFC29601939CA6D00A780B6 /* SSDisTool */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = SSDisTool; sourceTree = BUILT_PRODUCTS_DIR; };
 		EBFC29631939CA6D00A780B6 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		EBFC29661939CA6D00A780B6 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
@@ -74,6 +83,12 @@
 			isa = PBXGroup;
 			children = (
 				EBFC29661939CA6D00A780B6 /* main.m */,
+				EB5689E5194E845400F06506 /* Model.h */,
+				EB5689E6194E845400F06506 /* Model.m */,
+				EB5689E8194E8B2000F06506 /* NSString+Extra.h */,
+				EB5689E9194E8B2000F06506 /* NSString+Extra.m */,
+				EB5689EB194E8BF500F06506 /* NSArray+Extra.h */,
+				EB5689EC194E8BF500F06506 /* NSArray+Extra.m */,
 				EBFC296A1939CA6E00A780B6 /* SSDisTool.1 */,
 				EBFC29681939CA6E00A780B6 /* Supporting Files */,
 			);
@@ -140,6 +155,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				EBFC29671939CA6D00A780B6 /* main.m in Sources */,
+				EB5689ED194E8BF500F06506 /* NSArray+Extra.m in Sources */,
+				EB5689EA194E8B2000F06506 /* NSString+Extra.m in Sources */,
+				EB5689E7194E845400F06506 /* Model.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

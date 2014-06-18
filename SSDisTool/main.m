@@ -8,74 +8,78 @@
 
 #pragma mark - Marco
 
-#define kDistributionOperation @"-d"
-#define kDisSettingOperation @"-s"
+#define TASK_SUCCSEE_VALUE 0
 
-#define kAnalyzeOperation @"-a"
-#define kUnitTestOperation @"-u"
+#pragma mark - Command
 
-#define kHelpOperation @"-h"
+static NSString *const kDistributionOperation = @"-d";
+static NSString *const kDisSettingOperation = @"-s";
+static NSString *const kDisVersionOperation = @"-v";
+static NSString *const kDisOutputOperation = @"-o";
+
+static NSString *const kHelpOperation = @"-h";
 
 #pragma mark - Keys
+
+static NSString *const kCFBundleVersionStringKey = @"CFBundleShortVersionString";
+static NSString *const kCFBundleDisplayNameKey = @"CFBundleDisplayName";
 
 static NSString *const kDisplayNameKey = @"displayName";
 static NSString *const kAppSignKey = @"appSign";
 
-#pragma mark - Channel Struct
-
-struct Channel {
-    const char *displayName;
-    const char *appSign;
-    const char *pathName;
-    
-    char iconPaths[2048];
-};
+static NSString *const kBackupPath = @"backup";
+static NSString *const kIpaPath = @"SSDisTool_ipa";
 
 #import <Foundation/Foundation.h>
+#import "Model.h"
+#import "NSString+Extra.h"
+#import "NSArray+Extra.h"
 
-#pragma mark - Static Properties
-
-static NSMutableArray *channels = nil;
+#pragma mark - Static Propertie
 
 static NSString *backupPath = nil;
-static NSString *plistPath = nil;
-static NSString *configPath = nil;
-static NSString *originalImagePath = nil;
 static NSString *outputPath = nil;
-static struct Channel empty = {0,};
-static struct Channel original = {0,};
+
+
+static CommandInfo *commandInfo = nil;
+static ProjectInfo *projectInfo = nil;
+static NSArray *iconNameArray = nil;
+
 
 #pragma mark - Functions
 
 #pragma mark Private
-const char *fullPathWithPath(const char *c_path);
-NSString *runCommand(NSString *commandToRun, NSString *path);
-NSString *trim(NSString *originalString);
-BOOL setChannelConfig(struct Channel channel);
-void recoveryChannelConfig();
-BOOL isChannelReiterant(struct Channel channel);
+CommandResult *runCommand(NSString *commandToRun, NSString *path);
+BOOL isChannelReiterant(ChannelInfo *channel);
 
 #pragma mark Public
 /**
  *  发布
  */
-void distributeProject(NSString *projectPath, NSString *projectName,NSString *workspaceName,NSString *scheme);
-/**
- *  静态分析
- */
-void analyzeProject();
-/**
- *  单元测试
- */
-void unitTestProject();
+void distributeProject(ChannelInfo *info);
 /**
  *  帮助文档
  */
 void listHelpInfo();
-/**
- *  配置自己所需要的东西(定制型)
- */
-void setupCustomConfig(NSString *settingPath);
+
+//将命令参数放进去字典
+void parseLaunchCommand(int argc, const char * argv[]);
+//配置项目版本（git 版本）
+void setProjectVersion(NSString *version);
+//将工程参数设置进去model
+void setupProjectInfo();
+//获取channel信息
+void setupChannelInfo(NSString *settingPath);
+//备份工程信息
+BOOL backupProjectInfo();
+//设置渠道配置
+BOOL setChannelConfig(ChannelInfo *channel);
+//还原配置
+void resetChannelConfig();
+//退出程序
+void ssExit(NSString *info, int status);
+//设置输出目录
+void setupOutputPath(ChannelInfo *info);
 
 #pragma mark - Main
 
@@ -83,170 +87,133 @@ int main(int argc, const char * argv[])
 {
     @autoreleasepool {
         
+        commandInfo = [CommandInfo model];
+        projectInfo = [ProjectInfo model];
+        
         // insert code here...
         NSLog(@"%s",argv[0]);
         
+        parseLaunchCommand(argc, argv);
+        
         if (argc > 1) {
+            
             NSString *operation = [NSString stringWithUTF8String:argv[1]];
             
-            NSString *(^checkFilePath)(NSString *) = ^(NSString *originalPath){
-                NSString *appPath = [[NSBundle mainBundle] bundlePath];
-                NSString *resultPath = originalPath;
-                if (![resultPath rangeOfString:@"/"].location == 0){
-                    if ([resultPath rangeOfString:@"~/"].location == 0)
-                        resultPath = [NSHomeDirectory() stringByAppendingPathComponent:[resultPath substringFromIndex:1]];
-                    else
-                        resultPath = [appPath stringByAppendingPathComponent:resultPath];
-                }
+            if ([operation isCommand]) {
                 
-                return resultPath;
-            };
-            
-            if (argc > 2) {
-                
-                //获取必要的参数
-                NSString *projectPath = checkFilePath([NSString stringWithUTF8String:argv[2]]);
-                BOOL isDir = NO;
-                if (![[NSFileManager defaultManager] fileExistsAtPath:projectPath isDirectory:&isDir] && isDir) {
-                    NSLog(@"the path \"%@\" is not exist or is not a directory",projectPath);
-                    return EXIT_FAILURE;
-                }
-                NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:projectPath];
-                NSString *path = nil;
-                
-                //**************必要参数***************//
-                NSString *project = nil;
-                NSString *workspace = nil;
-                NSString *scheme = nil;
-                
-                while (path = [enumerator nextObject]) {
-                    if ([path rangeOfString:@".svn"].location != NSNotFound ||
-                        [path rangeOfString:@".git"].location != NSNotFound ||
-                        [path rangeOfString:@"Pods"].location != NSNotFound ||
-                        [path rangeOfString:@"Tests"].location != NSNotFound) continue;
-                    
-                    if (([path rangeOfString:@".xcworkspacedata"].location != NSNotFound ||
-                         [path rangeOfString:@"xcshareddata"].location != NSNotFound ||
-                         [path rangeOfString:@"xcuserdata"].location != NSNotFound)) {
-                        if (!scheme &&[[path lastPathComponent] rangeOfString:@".xcscheme"].location != NSNotFound) {
-                            scheme = [[[path lastPathComponent] componentsSeparatedByString:@"."] firstObject];
-                        }
+                if (argc > 2) {
+                    NSString *path = [NSString fullPathWithUTF8String:argv[2]];
+                    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+                        commandInfo.projectPath = path;
                     }
                     else {
-                        if ([path rangeOfString:@".xcodeproj"].location == NSNotFound &&
-                            [[path lastPathComponent] rangeOfString:@".xcworkspace"].location != NSNotFound) {
-                            workspace = [path lastPathComponent];
-                        }
-                        
-                        if (!project && [[path lastPathComponent] rangeOfString:@".xcodeproj"].location != NSNotFound) {
-                            project = [path lastPathComponent];
-                        }
-                        
-                        if ([[path lastPathComponent] rangeOfString:@"Info.plist"].location != NSNotFound) {
-                            plistPath = [NSString stringWithFormat:@"%@/%@",projectPath,path];
-                        }
-                        if ([[path lastPathComponent] rangeOfString:@"icon"].location != NSNotFound &&
-                            [[path lastPathComponent] rangeOfString:@"."].location == NSNotFound) {
-                            if (!originalImagePath) {
-                                originalImagePath = [projectPath stringByAppendingFormat:@"/%@",path];
-                            }
-                        }
-                        if ([[path lastPathComponent] rangeOfString:@"Config.h"].location != NSNotFound) {
-                            configPath = [NSString stringWithFormat:@"%@/%@",projectPath,path];
-                        }
-                        
-                        if ([[path lastPathComponent] rangeOfString:@"Icon@2x.png"].location != NSNotFound ||
-                            [[path lastPathComponent] rangeOfString:@"Icon-small@2x.png"].location != NSNotFound ||
-                            [[path lastPathComponent] rangeOfString:@"Icon-small-40@2x.png"].location != NSNotFound ||
-                            [[path lastPathComponent] rangeOfString:@"Icon-120@2x.png"].location != NSNotFound) {
-                            strcat(original.iconPaths, [[NSString stringWithFormat:@"|%@/%@",projectPath,path] UTF8String]);
-                        }
+                        ssExit([NSString stringWithFormat:@"project path '%@' is not exists",path], EXIT_FAILURE);
                     }
                 }
                 
-                if ((project || workspace) && scheme && plistPath) {
-                    if ([operation isEqualToString:kDistributionOperation]) {
-                        
-                        NSString *fullPath = nil;
-                        if (argc >= 4) {
-                            NSString *subOper = [NSString stringWithUTF8String:argv[3]];
-                            if ([subOper isEqualToString:kDisSettingOperation]) {
-                                char temp[200];
-                                
-                                if (argc > 4) {
-                                    strcpy(temp, argv[4]);
+                iconNameArray = @[@"Icon.png",@"Icon@2x.png",
+                                  @"Icon-small.png",@"Icon-small@2x.png",
+                                  @"Icon-small-40.png",@"Icon-small-40@2x.png",
+                                  @"Icon-120.png",@"Icon-120@2x.png"];
+                
+                if ([operation isEqualToString:kDistributionOperation]) {
+                    setupProjectInfo();
+                    
+                    //先判断工程版本
+                    NSString *version = commandInfo.commandDic[kDisVersionOperation];
+                    if (version.length > 0) {
+                        setProjectVersion(version);
+                    }
+                    else {
+                        ssExit(@"needs -v command and the value of version", EXIT_FAILURE);
+                    }
+                    
+                    //channel info
+                    NSString *settingPath = commandInfo.commandDic[kDisSettingOperation];
+                    if (settingPath && settingPath.length == 0) {
+                        NSString *toolPath = [NSString stringWithFormat:@"%@/..",[NSString stringWithUTF8String:argv[0]]];
+                        settingPath = toolPath.fullPath;
+                    }
+                    setupChannelInfo(settingPath);
+                    
+                    if (commandInfo.channels.count > 0) {
+                        for (ChannelInfo *info in commandInfo.channels) {
+                            if (backupProjectInfo()) {
+                                if (setChannelConfig(info)) {
+                                    
+                                    //设置输出目录
+                                    setupOutputPath(info);
+                                    
+                                    NSLog(@"\n"
+                                          "‼️‼️‼️‼️‼️‼️‼️‼️‼️\n"
+                                          "Star to distribute project\n"
+                                          "************Info************\n"
+                                          "Project:%@\n"
+                                          "Channel:%@\n"
+                                          "AppSign:%@\n"
+                                          "****************************\n",
+                                          projectInfo.projectName,
+                                          info.displayName,
+                                          info.appSign);
+                                    
+                                    distributeProject(info);
+                                    
+                                    resetChannelConfig();
                                 }
                                 else {
-                                    const char *outputPath = argv[0];
-                                    sprintf(temp, "%s/..",outputPath);
+                                    NSLog(@"\n"
+                                          "‼️‼️‼️‼️‼️‼️‼️‼️‼️\n"
+                                          "************Info************\n"
+                                          "Project:%@\n"
+                                          "Channel:%@\n"
+                                          "AppSign:%@\n"
+                                          "****************************\n"
+                                          "Set channel info fail and no ipa output\n",
+                                          projectInfo.projectName,
+                                          info.displayName,
+                                          info.appSign);
                                 }
-                                
-                                fullPath = [NSString stringWithUTF8String:fullPathWithPath(temp)];
-                                setupCustomConfig(fullPath);
                             }
                             else {
-                                NSLog(@"Operation or parameters error");
-                                return EXIT_FAILURE;
+                                NSLog(@"\n"
+                                      "‼️‼️‼️‼️‼️‼️‼️‼️‼️\n"
+                                      "************Info************\n"
+                                      "Project:%@\n"
+                                      "Workspace:%@\n"
+                                      "Scheme:%@\n"
+                                      "AppSign:%@\n"
+                                      "DisplayName:%@\n"
+                                      "iconCount:%lu\n"
+                                      "****************************\n"
+                                      "Backup project info fail\n",
+                                      projectInfo.projectName,
+                                      projectInfo.workspaceName,
+                                      projectInfo.scheme,
+                                      projectInfo.backupAppSign,
+                                      projectInfo.backDisplayName,
+                                      (unsigned long)projectInfo.iconArray.count);
                             }
                         }
-                        else {
-                            char o_path[100];
-                            sprintf(o_path,"~/Desktop/%s.ipa", [scheme UTF8String]);
-                            outputPath = [NSString stringWithUTF8String:fullPathWithPath(o_path)];
-                        }
-                        
-                        if (channels.count > 0 && backupPath.length > 0) {
-                            for (NSValue *values in channels) {
-                                
-                                struct Channel channel = {0,};
-                                [values getValue:&channel];
-                                
-                                if (memcmp(&channel, &empty, sizeof(channel)) > 0) {
-                                    if (setChannelConfig(channel)) {
-                                        NSString *displayName = [NSString stringWithUTF8String:channel.displayName];
-                                        outputPath = [NSString stringWithFormat:@"%@/%@.ipa",fullPath,displayName];
-                                        NSLog(@"‼️‼️‼️‼️‼️‼️‼️‼️‼️\n************Info************\nProject:%@\nChannel:%@\nAppSign:%@\n****************************",
-                                              project,
-                                              [NSString stringWithUTF8String:channel.displayName],
-                                              [NSString stringWithUTF8String:channel.appSign]);
-                                        distributeProject(projectPath,project,workspace,scheme);
-                                        recoveryChannelConfig();
-                                    }
-                                }
-                            }
-                        }
-                        else {
-                            distributeProject(projectPath,project,workspace,scheme);
-                        }
-                        
-                    }
-                    else if ([operation isEqualToString:kAnalyzeOperation]) {
-                        
-                    }
-                    else if ([operation isEqualToString:kUnitTestOperation]) {
-                        
                     }
                     else {
-                        NSLog(@"Needs operation parameter!");
-                        return EXIT_FAILURE;
+                        NSLog(@"\n"
+                              "‼️‼️‼️‼️‼️‼️‼️‼️‼️\n"
+                              "Star to distribute project\n");
+                        
+                        distributeProject(nil);
                     }
+                    
+                }
+                else if ([operation isEqualToString:kHelpOperation]) {
+                    listHelpInfo();
                 }
                 else {
-                    NSLog(@"Obtain shell script parameters error or the path of project not correct");
-                    return EXIT_FAILURE;
+                    ssExit(@"command unsupport", EXIT_FAILURE);
                 }
             }
-            else if ([operation isEqualToString:kHelpOperation]) {
-                listHelpInfo();
-            }
             else {
-                NSLog(@"Command line tool needs operation parameters!");
-                return EXIT_FAILURE;
+                ssExit(@"command unsupport", EXIT_FAILURE);
             }
-            
-        }
-        else {
-            listHelpInfo();
         }
     }
     return 0;
@@ -254,394 +221,578 @@ int main(int argc, const char * argv[])
 
 #pragma mark - Functions implementation
 
-void distributeProject(NSString *projectPath,NSString *projectName,NSString *workspaceName,NSString *scheme)
+void distributeProject(ChannelInfo *info)
 {
     //获取sdk信息
-    NSString *sdk = runCommand([NSString stringWithFormat:@"xcodeproj show %@/%@|grep SDKROOT:|awk '{print $2}'|uniq",
-                                projectPath,
-                                projectName],nil);
-    NSString *sdkVersion = runCommand([NSString stringWithFormat:@"xcodeproj show %@/%@|grep IPHONEOS_DEPLOYMENT_TARGET |awk -F \'[\\t:\'\\\'\']\' \'{print $3}\'|uniq",
-                                       projectPath,
-                                       projectName],nil);
-    
-    NSString *buildSdk = [NSString stringWithFormat:@"%@%@",trim(sdk),trim(sdkVersion)];
-    
-    NSString *command = nil;
-    if (workspaceName.length > 0 && scheme.length > 0) {
-        command = [NSString stringWithFormat:
-                   @"xcodebuild -workspace %@ -scheme %@ -configuration Release clean build|grep Validate |awk '{print $2}'",workspaceName,scheme];
+    NSString *command = [NSString stringWithFormat:@"xcodeproj show %@/%@|grep SDKROOT:|awk '{print $2}'|uniq",
+                         commandInfo.projectPath,
+                         projectInfo.projectName];
+    CommandResult *rs = runCommand(command,nil);
+    if (rs.status != TASK_SUCCSEE_VALUE) {
+        ssExit([NSString stringWithFormat:@"run command '%@' fail",command], EXIT_FAILURE);
     }
-    else if (projectName.length > 0)
+    NSString *sdk = rs.result.trim;
+    
+    command = [NSString stringWithFormat:@"xcodeproj show %@/%@|grep IPHONEOS_DEPLOYMENT_TARGET |awk -F \'[\\t:\'\\\'\']\' \'{print $3}\'|uniq",
+               commandInfo.projectPath,
+               projectInfo.projectName];
+    rs = runCommand(command,nil);
+    if (rs.status != TASK_SUCCSEE_VALUE) {
+        ssExit([NSString stringWithFormat:@"run command '%@' fail",command], EXIT_FAILURE);
+    }
+    
+    NSString *sdkVersion = rs.result.trim;
+    NSString *buildSdk = [NSString stringWithFormat:@"%@%@",sdk,sdkVersion];
+    
+    //构建
+    command = nil;
+    if (projectInfo.workspaceName.length > 0 && projectInfo.scheme.length > 0) {
+        command = [NSString stringWithFormat:
+                   @"xcodebuild -workspace %@ -scheme %@ "
+                   "-configuration Release clean build|grep Validate |awk '{print $2}'",
+                   projectInfo.workspaceName,projectInfo.scheme];
+    }
+    else if (projectInfo.projectName.length > 0)
     {
         command = [NSString stringWithFormat:
-                   @"xcodebuild -project %@ -sdk %@ clean build|grep Validate |awk '{print $2}'",projectName,buildSdk];
+                   @"xcodebuild -project %@ -sdk %@ clean build|grep Validate |awk '{print $2}'",
+                   projectInfo.projectName,buildSdk];
     }
-    NSLog(@"Packing ipa wait a moment...");
+    
     if (command.length > 0) {
-        NSString *appPath = runCommand(command, projectPath);
-        
-        BOOL isDir = NO;
-        if (![[NSFileManager defaultManager] fileExistsAtPath:appPath isDirectory:&isDir] && isDir) {
-            NSLog(@"the path \"%@\" is not exist or is not a directory",projectPath);
-            exit(EXIT_FAILURE);
+        rs = runCommand(command, commandInfo.projectPath);
+        if (rs.status != TASK_SUCCSEE_VALUE) {
+            ssExit([NSString stringWithFormat:@"run command '%@' fail",command], EXIT_FAILURE);
+        }
+        NSString *appPath = rs.result.trim;
+        if (![[NSFileManager defaultManager] fileExistsAtPath:appPath]) {
+            ssExit([NSString stringWithFormat:@"the path \"%@\" is not exist or is not a directory",
+                    commandInfo.projectPath], EXIT_FAILURE);
         }
         
-        //TODO 保存dSYM文件
+        if (outputPath.length == 0) {
+            setupOutputPath(nil);
+        }
+        
+        
+        //保存dSYM文件
+//        NSString *dSYM = [NSString stringWithFormat:@"%@.dSYM",appPath];
+//        command = [NSString stringWithFormat:@"cp -r %@ %@",dSYM,outputPath];
+//        rs = runCommand(command, nil);
+//        if (rs.status != TASK_SUCCSEE_VALUE) {
+//            NSLog(@"SSDisTool: copy dSYM file failed");
+//        }
         
         //打包ipa
-        if (outputPath.length == 0) {
-            outputPath = [NSString stringWithUTF8String:fullPathWithPath("~/Desktop/auto_packing.ipa")];
+        NSString *name = info ? info.appSign : [projectInfo.projectName stringByDeletingPathExtension];
+        NSString *extension = [projectInfo.projectName isContainString:@"XYT"] ? @"_teacher" : @"";
+        
+        NSString *ipa = [NSString stringWithFormat:@"%@/%@%@.ipa",
+                         outputPath,name,extension];
+        command = [NSString stringWithFormat:@"xcrun -sdk %@ PackageApplication -o %@ -v %@",sdk,ipa,appPath];
+        rs = runCommand(command, nil);
+        if (rs.status != TASK_SUCCSEE_VALUE) {
+            ssExit([NSString stringWithFormat:@"run command '%@' fail",command], EXIT_FAILURE);
         }
         
-        command = [NSString stringWithFormat:@"xcrun -sdk %@ PackageApplication -o %@ -v %@",trim(sdk),outputPath,appPath];
-        runCommand(command, nil);
-        
-        NSLog(@"End packing ipa,\npath:%@.",outputPath);
+        NSLog(@"\n"
+              "‼️End distribution‼️\n"
+              "ipa path : %@",ipa);
     }
     else {
-        NSLog(@"Get workspaceName、scheme or projectName Error.");
+        ssExit(@"Get workspaceName、scheme or projectName Error", EXIT_FAILURE);
     }
-}
-
-void analyzeProject()
-{
-    
-}
-
-void unitTestProject()
-{
-    
 }
 
 void listHelpInfo()
 {
     NSLog(@"%@",
-          @"\n//////////////////SSDisTool////////////////////\n"
-          "// * -d 发布命令，后面接工程目录参数\n"
-          "//      -s 配置渠道信息（强定制化），后面接配置目录。\n"
-          "//         当需要使用渠道配置时，Info-plist里面的CFBundleDisplayName（Bundle display name）不能为系统默认的宏\n"
-          "//         PlistBuddy 不支持\n"
-          "//         修改appSign，sed命令会重新创建一个新Config.h文件，并且以新时间覆盖。此时版本控制会提示修改，revert即可\n"
-          "// * -a for analyze project and output in shell window\n"
-          "// * -u for unit test prject and output\n"
-          "// * -h for help information\n"
-          "// ****************************\n"
-          "// 例子:\n"
-          "//   普通发布：SSDisTool -d ~/Desktop/Project\n"
-          "//   渠道发布：SSDisTool -d ~/Desktop/Project -s ~/Desktop/Config\n"
-          "//////////////////help info////////////////////");
-}
-
-void setupCustomConfig(NSString *settingPath)
-{
-    BOOL isDir = NO;
-    if (![[NSFileManager defaultManager] fileExistsAtPath:settingPath isDirectory:&isDir] && isDir) {
-        NSLog(@"the path \"%@\" is not exist",settingPath);
-        return;
-    }
-    
-    backupPath = [NSString stringWithFormat:@"%@/backup",settingPath];
-    
-    NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:settingPath];
-    NSString *path = nil;
-    NSString *localName = nil;
-    int complate = 0;
-    struct Channel channel = {0,};
-    channels = [[NSMutableArray alloc] init];
-    while (path = [enumerator nextObject]) {
-        
-        if ([path rangeOfString:@".DS_Store"].location != NSNotFound ||
-            [[path lastPathComponent] rangeOfString:@"SSDisTool"].location != NSNotFound ||
-            [[path lastPathComponent] rangeOfString:@"backup"].location != NSNotFound) continue;
-        
-        if ([path rangeOfString:@"/"].location == NSNotFound) {
-            localName = path;
-            channel = empty;
-            channel.pathName = [localName UTF8String];
-            complate = 1;
-        }
-        
-        int result = memcmp(&channel, &empty, sizeof(channel));
-        if (localName.length > 0 && result > 0) {
-            if ([path rangeOfString:localName].location != NSNotFound) {
-                
-                //icon
-                if ([path rangeOfString:@"/icon"].location != NSNotFound) {
-                    if ([[path lastPathComponent] rangeOfString:@"Icon@2x.png"].location != NSNotFound ||
-                        [[path lastPathComponent] rangeOfString:@"Icon-small@2x.png"].location != NSNotFound ||
-                        [[path lastPathComponent] rangeOfString:@"Icon-small-40@2x.png"].location != NSNotFound ||
-                        [[path lastPathComponent] rangeOfString:@"Icon-120@2x.png"].location != NSNotFound) {
-                        strcat(channel.iconPaths, [[NSString stringWithFormat:@"|%@/%@",settingPath,path] UTF8String]);
-                        complate = complate << 1;
-                    }
-                    continue;
-                }
-                else {
-                    complate = 16;
-                }
-                
-                //plist
-                if ([[path lastPathComponent] rangeOfString:@".plist"].location != NSNotFound) {
-                    NSString *plistPath = [settingPath stringByAppendingFormat:@"/%@",path];
-                    NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Print %@\" \"%@\"",
-                                         kDisplayNameKey,plistPath];
-                    NSString *result = trim(runCommand(command, nil));
-                    if (result.length > 0) {
-                        channel.displayName = [result UTF8String];
-                    }
-                    command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Print %@\" \"%@\"",
-                               kAppSignKey,plistPath];
-                    result = trim(runCommand(command, nil));
-                    if (result.length > 0) {
-                        channel.appSign = [result UTF8String];
-                    }
-                    complate = complate << 1;
-                }
-                
-                if ((complate & 32) != 0) {
-                    if (!isChannelReiterant(channel)) {
-                        [channels addObject:[NSValue value:&channel withObjCType:@encode(struct Channel)]];
-                    }
-                    else {
-                        exit(EXIT_FAILURE);
-                    }
-                }
-            }
-        }
-    }
+          @"\n******************SSDisTool******************\n"
+          "*This tool is an auto distribution tool for xcode\n"
+          "*project.\n"
+          "\n"
+          "*Usage: SSDistool [command] [optional] [optional]\n"
+          "\n"
+          "*Command:\n"
+          "** -d distribute xcode project.It must set the path\n"
+          "*of project follow behind it.\n"
+          "\n"
+          "*Optional:\n"
+          "\n"
+          "** -s custom channel config,the value of this command\n"
+          "*is a path,which contain the channel info.Or empty \n"
+          "*that will use the path contain SSDistool.\n"
+          "\n"
+          "** -v the project distribution version.It must not be\n"
+          "*nil.When tool find that the version of the project is\n"
+          "*not same to this version,it will find the version in git\n"
+          "*and checkout it while find one is same.\n"
+          "\n"
+          "** -o the output path.if not set,the output path will \n"
+          "*be the channel path if there is channel info,or will \n"
+          "*be the path ~/Desktop\n"
+          "******************help info******************");
 }
 
 #pragma mark - Private methods
 
-const char *fullPathWithPath(const char *c_path)
-{
-    NSString *path = [NSString stringWithUTF8String:c_path];
+void parseLaunchCommand(int argc, const char * argv[]) {
     
-    path = [path stringByStandardizingPath];
-    
-    return [path UTF8String];
-}
-
-NSString *runCommand(NSString *commandToRun,NSString *path)
-{
-    NSMutableArray *commands = [NSMutableArray arrayWithObject:@"-c"];
-    
-    [commands addObject:commandToRun];
-    
-    NSTask *task;
-    task = [[NSTask alloc] init];
-    [task setLaunchPath: @"/bin/sh"];
-    if (path.length > 0) {
-        [task setCurrentDirectoryPath:path];
+    if (argc > 1) {
+        BOOL isCommand = NO;
+        NSString *key = nil;
+        NSString *values = nil;
+        for (int i=2; i<argc; i++) {
+            NSString *arg = [NSString stringWithUTF8String:argv[i]];
+            
+            if (i == argc-1) {
+                if ([arg isCommand]) {
+                    if ([key isCommand] && isCommand) {
+                        commandInfo.commandDic[key] = @"";
+                    }
+                    
+                    commandInfo.commandDic[arg] = @"";
+                }
+                else {
+                    if ([key isCommand]) {
+                        commandInfo.commandDic[key] = arg;
+                    }
+                }
+                continue;
+            }
+            
+            if ([arg isCommand]) {
+                if (isCommand) {
+                    commandInfo.commandDic[key] = @"";
+                }
+                
+                key = arg;
+                isCommand = YES;
+            }
+            else {
+                values = arg;
+                
+                if (isCommand) {
+                    commandInfo.commandDic[key] = values;
+                }
+                
+                isCommand = NO;
+            }
+            
+        }
     }
-    
-    [task setArguments: commands];
-    
-    NSPipe *pipe;
-    pipe = [NSPipe pipe];
-    [task setStandardOutput: pipe];
-    
-    NSFileHandle *file;
-    file = [pipe fileHandleForReading];
-    
-    [task launch];
-    
-    NSData *data;
-    data = [file readDataToEndOfFile];
-    
-    NSString *output;
-    output = [[NSString alloc] initWithData: data encoding: NSUTF8StringEncoding];
-    return output;
+    else {
+        listHelpInfo();
+    }
 }
 
-NSString *trim(NSString *originalString)
-{
-    return [originalString stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-}
-
-BOOL setChannelConfig(struct Channel channel)
-{
-    NSString *paths = nil;
-    NSMutableArray *array = nil;
-    if ([NSString stringWithUTF8String:channel.iconPaths].length > 0) {
+void setProjectVersion(NSString *version) {
+    if (![version isEqualToString:projectInfo.version]) {
         
-        //backup
-        if (backupPath.length > 0) {
-            BOOL isDir = NO;
-            if (![[NSFileManager defaultManager] fileExistsAtPath:backupPath isDirectory:&isDir]) {
-                NSLog(@"the path \"%@\" is not exist or is not a directory",backupPath);
-                NSString *command = [NSString stringWithFormat:@"mkdir %@/",backupPath];
-                runCommand(command, nil);
-            }
-        }
-        else {
-            NSLog(@"There is not backupPath");
-            return NO;
-        }
+        NSString *gitPath = [NSString stringWithFormat:@"%@/..",commandInfo.projectPath].fullPath;
         
-        paths = [NSString stringWithUTF8String:original.iconPaths];
-        array = [[paths componentsSeparatedByString:@"|"] mutableCopy];
-        
-        //过滤掉空字符串
-        for (NSInteger i = array.count-1; i>=0; i--) {
-            if ([array[i] length] == 0) {
-                [array removeObjectAtIndex:i];
-            }
-        }
-        
-        //backup icon
-        if (array.count == 4) {
-            for (NSString *path in array) {
-                if (path.length > 0) {
-                    NSString *command = [NSString stringWithFormat:@"cp %@ %@",path,backupPath];
-                    runCommand(command, nil);
+        NSString *command = @"git tag";
+        CommandResult *rs = runCommand(command, gitPath);
+        if (rs.status == TASK_SUCCSEE_VALUE) {
+            NSArray *tagArray = [rs.result componentsSeparatedByString:@"\n"];
+            NSLog(@"SSDisTool: project git tags are '%@'",tagArray);
+            
+            if ([tagArray containsString:version]) {
+                command = [NSString stringWithFormat:@"git checkout %@",version];
+                rs = runCommand(command, gitPath);
+                if (rs.status != TASK_SUCCSEE_VALUE) {
+                    ssExit(@"checkout tag fail,project version is different to verion value", EXIT_FAILURE);
                 }
             }
         }
         else {
-            return NO;
+            NSLog(@"SSDisTool: get project git tag fail");
         }
     }
-    
-    //backup dispalyName
-    if (plistPath.length > 0) {
-        NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Print CFBundleDisplayName\" \"%@\"",plistPath];
-        original.displayName = [trim(runCommand(command, nil)) UTF8String];
-    }
-    else {
-        return NO;
-    }
-    
-    //backup appsign
-    if (configPath.length > 0) {
-        NSString *command = [NSString stringWithFormat:
-                             @"cat %@ |grep \"#define kAppSign\"|sed \'s/#define kAppSign @\"\\(.*\\)\"/\\1/g\'",
-                             configPath];
-        original.appSign = [trim(runCommand(command, nil)) UTF8String];
-    }
-    else {
-        return NO;
-    }
-    
-    //set
-    paths = [NSString stringWithUTF8String:channel.iconPaths];
-    array = [[paths componentsSeparatedByString:@"|"] mutableCopy];
-    
-    //过滤掉空字符串
-    for (NSInteger i = array.count-1; i>=0; i--) {
-        if ([array[i] length] == 0) {
-            [array removeObjectAtIndex:i];
+}
+
+void setupProjectInfo() {
+    NSDirectoryEnumerator * enumerator = [[NSFileManager defaultManager] enumeratorAtPath:commandInfo.projectPath];
+    NSString *path = nil;
+    while (path = [enumerator nextObject]) {
+        if ([path isContainString:@".svn"] ||
+            [path isContainString:@".git"] ||
+            [path isContainString:@"Pods"] ||
+            [path isContainString:@"Tests"] ||
+            [path isContainString:@".DS_Store"]) continue;
+        
+        if (([path isContainString:@".xcworkspacedata"] ||
+             [path isContainString:@"xcshareddata"] ||
+             [path isContainString:@"xcuserdata"])) {
+            if (!projectInfo.scheme &&[[path lastPathComponent] isContainString:@".xcscheme"]) {
+                projectInfo.scheme = [path lastPathComponent].stringByDeletingPathExtension;
+            }
+            continue;
         }
-    }
-    
-    //set icon
-    if (array.count == 4) {
-        for (NSString *path in array) {
-            if (path.length > 0) {
-                NSString *command = [NSString stringWithFormat:@"cp %@ %@",path,originalImagePath];
-                runCommand(command, nil);
+        else {
+            if (![path isContainString:@".xcodeproj"] &&
+                [[path lastPathComponent] isContainString:@".xcworkspace"]) {
+                projectInfo.workspaceName = [path lastPathComponent];
+                continue;
+            }
+            
+            if (!projectInfo.projectName && [[path lastPathComponent] isContainString:@".xcodeproj"]) {
+                projectInfo.projectName = [path lastPathComponent];
+                continue;
+            }
+            
+            if ([[path lastPathComponent] isContainString:@"Info.plist"]) {
+                projectInfo.infoPlistPath = [NSString stringWithFormat:@"%@/%@",commandInfo.projectPath,path];
+                continue;
+            }
+            
+            if ([iconNameArray containsString:[path lastPathComponent]]) {
+                if (!projectInfo.iconImagePath) {
+                    NSString *upPath = [NSString stringWithFormat:@"%@/%@/..",commandInfo.projectPath,path];
+                    projectInfo.iconImagePath = upPath.fullPath;
+                }
+                [projectInfo.iconArray addObject:[NSString stringWithFormat:@"%@/%@",commandInfo.projectPath,path]];
+                continue;
+            }
+            
+            if ([[path lastPathComponent] isContainString:@"Config.h"]) {
+                projectInfo.configPath = [NSString stringWithFormat:@"%@/%@",commandInfo.projectPath,path];
             }
         }
     }
     
-    //set plist
-    if (plistPath.length > 0) {
-        NSString *displayName = [NSString stringWithUTF8String:channel.displayName];
-        NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Set :CFBundleDisplayName %@\" \"%@\"",
-                             displayName,plistPath];
-        runCommand(command, nil);
+    //获取version
+    if (projectInfo.infoPlistPath.length > 0) {
+        NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Print %@\" \"%@\"",
+                             kCFBundleVersionStringKey,projectInfo.infoPlistPath];
+        CommandResult *rs = runCommand(command, nil);
+        if (rs.status == TASK_SUCCSEE_VALUE) {
+            projectInfo.version = rs.result.trim;
+        }
+        else {
+            ssExit([NSString stringWithFormat:@"run command '%@' fail",command], EXIT_FAILURE);
+        }
+    }
+}
+
+void setupChannelInfo(NSString *settingPath) {
+    if ([[NSFileManager defaultManager] fileExistsAtPath:settingPath]) {
+        
+        NSMutableDictionary *channelDic = [NSMutableDictionary dictionary];
+        NSString *key = nil;
+        NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:settingPath];
+        NSString *path = nil;
+        while (path = [enumerator nextObject]) {
+            if ([path isContainString:@".DS_Store"] ||
+                [path isContainString:@"SSDisTool"] ||
+                [path isContainString:kBackupPath] ||
+                [path isContainString:kIpaPath]) {
+                continue;
+            }
+            
+            if (![path isContainString:@"/"]) {
+                key = [path copy];
+                ChannelInfo *info = [ChannelInfo model];
+                info.path = [NSString stringWithFormat:@"%@/%@",settingPath,path];
+                channelDic[key] = info;
+            }
+            else {
+                ChannelInfo *info = channelDic[key];
+                
+                if (info) {
+                    if ([iconNameArray containsString:path.lastPathComponent]) {
+                        [info.iconArray addObject:[NSString stringWithFormat:@"%@/%@",settingPath,path]];
+                        continue;
+                    }
+                    
+                    if ([[path lastPathComponent] isContainString:@".plist"]) {
+                        NSString *plistPath = [NSString stringWithFormat:@"%@/%@",settingPath,path];
+                        
+                        NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Print %@\" \"%@\"",
+                                             kDisplayNameKey,plistPath];
+                        CommandResult *rs = runCommand(command, nil);
+                        if (rs.status == TASK_SUCCSEE_VALUE) {
+                            info.displayName = rs.result.trim;
+                        }
+                        
+                        command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Print %@\" \"%@\"",
+                                   kAppSignKey,plistPath];
+                        rs = runCommand(command, nil);
+                        if (rs.status == TASK_SUCCSEE_VALUE) {
+                            info.appSign = rs.result.trim;
+                            
+                            if (isChannelReiterant(info)) {
+                                exit(EXIT_FAILURE);
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+        
+        [commandInfo.channels addObjectsFromArray:channelDic.allValues];
+        
+        commandInfo.backupPath = [NSString stringWithFormat:@"%@/%@",settingPath,kBackupPath];
+    }
+    else {
+        NSLog(@"SSDisTool: The path '%@' of channel info is not exists",settingPath);
+    }
+}
+
+BOOL backupProjectInfo() {
+    
+    if (commandInfo.backupPath.length > 0) {
+        if (![[NSFileManager defaultManager] fileExistsAtPath:commandInfo.backupPath]) {
+            NSString *command = [NSString stringWithFormat:@"mkdir %@",commandInfo.backupPath];
+            CommandResult *rs = runCommand(command, nil);
+            if (rs.status != TASK_SUCCSEE_VALUE) {
+                NSLog(@"SSDisTool: create dir '%@'\nerror %d",commandInfo.backupPath,rs.status);
+            }
+        }
+        
+        for (NSString *path in projectInfo.iconArray) {
+            if (path.length > 0) {
+                NSString *command = [NSString stringWithFormat:@"cp %@ %@",path,commandInfo.backupPath];
+                CommandResult *rs = runCommand(command, nil);
+                if (rs.status != TASK_SUCCSEE_VALUE) {
+                    NSLog(@"SSDisTool: backup icon '%@' failed",path);
+                }
+            }
+        }
+    }
+    else {
+        return NO;
     }
     
-    //set appSign
-    if (configPath.length > 0) {
-        NSString *oldSign = [NSString stringWithUTF8String:original.appSign];
-        NSString *newSign = [NSString stringWithUTF8String:channel.appSign];
-        NSString *command = [NSString stringWithFormat:@"sed -ie 's/%@/%@/g' %@",oldSign,newSign,configPath];
-        runCommand(command, nil);
+    if (projectInfo.infoPlistPath.length > 0) {
+        NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Print %@\" \"%@\"",
+                             kCFBundleDisplayNameKey,projectInfo.infoPlistPath];
+        CommandResult *rs = runCommand(command, nil);
+        if (rs.status != TASK_SUCCSEE_VALUE) {
+            NSLog(@"SSDisTool: backup displayName failed");
+            return NO;
+        }
+        projectInfo.backDisplayName = rs.result.trim;
+    }
+    
+    if (projectInfo.configPath.length > 0) {
+        NSString *command = [NSString stringWithFormat:
+                             @"cat %@ |grep \"#define kAppSign\"|sed \'s/#define kAppSign @\"\\(.*\\)\"/\\1/g\'",
+                             projectInfo.configPath];
+        CommandResult *rs = runCommand(command, nil);
+        if (rs.status != TASK_SUCCSEE_VALUE) {
+            NSLog(@"SSDisTool: backup appSign failed");
+            return NO;
+        }
+        projectInfo.backupAppSign = rs.result.trim;
     }
     
     return YES;
 }
 
-void recoveryChannelConfig()
+BOOL setChannelConfig(ChannelInfo *channel)
 {
-    //backup
-    NSString *paths = [NSString stringWithUTF8String:original.iconPaths];
-    NSMutableArray *array = [[paths componentsSeparatedByString:@"|"] mutableCopy];
-    
-    //过滤掉空字符串
-    for (NSInteger i = array.count-1; i>=0; i--) {
-        if ([array[i] length] == 0) {
-            [array removeObjectAtIndex:i];
-        }
+    if (channel.displayName.length == 0 && channel.appSign.length == 0) {
+        return NO;
     }
     
-    for (NSString *path in array) {
+    CommandResult *rs = nil;
+    //set icon
+    for (NSString *path in channel.iconArray) {
         if (path.length > 0) {
-            NSString *backupImagePath = [NSString stringWithFormat:@"%@/%@",backupPath,[path lastPathComponent]];
-            if ([[NSFileManager defaultManager] fileExistsAtPath:backupImagePath]) {
-                NSString *command = [NSString stringWithFormat:@"mv %@ %@",backupImagePath,originalImagePath];
-                runCommand(command, nil);
+            NSString *command = [NSString stringWithFormat:@"cp %@ %@",path,projectInfo.iconImagePath];
+            rs = runCommand(command, nil);
+            if (rs.status != TASK_SUCCSEE_VALUE) {
+                NSLog(@"SSDisTool: set channel icon '%@' failed",path);
             }
         }
     }
     
-    if (plistPath.length > 0) {
-        NSString *displayName = [NSString stringWithUTF8String:original.displayName];
-        NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Set :CFBundleDisplayName '%@'\" \"%@\"",
-                             displayName,plistPath];
-        runCommand(command, nil);
+    //set plist
+    if (channel.displayName.length > 0) {
+        NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Set :%@ %@\" \"%@\"",
+                             kCFBundleDisplayNameKey,channel.displayName,projectInfo.infoPlistPath];
+        rs = runCommand(command, nil);
+        if (rs.status != TASK_SUCCSEE_VALUE) {
+            NSLog(@"SSDisTool: set channel displayName '%@' failed",channel.displayName);
+        }
     }
     
-    if (configPath.length > 0) {
+    //set appSign
+    if (projectInfo.configPath.length > 0) {
+        NSString *command = [NSString stringWithFormat:@"sed -ie 's/%@/%@/g' %@",
+                             projectInfo.backupAppSign,channel.appSign,projectInfo.configPath];
+        rs = runCommand(command, nil);
+        if (rs.status != TASK_SUCCSEE_VALUE) {
+            NSLog(@"SSDisTool: set channel appSign '%@' failed",channel.appSign);
+        }
+    }
+    
+    return YES;
+}
+
+void resetChannelConfig()
+{
+    CommandResult *rs = nil;
+    for (NSString *path in projectInfo.iconArray) {
+        if (path.length > 0) {
+            NSString *backupImagePath = [NSString stringWithFormat:@"%@/%@",commandInfo.backupPath,[path lastPathComponent]];
+            if ([[NSFileManager defaultManager] fileExistsAtPath:backupImagePath]) {
+                NSString *command = [NSString stringWithFormat:@"mv %@ %@",backupImagePath,projectInfo.iconImagePath];
+                rs = runCommand(command, nil);
+                if (rs.status != TASK_SUCCSEE_VALUE) {
+                    ssExit([NSString stringWithFormat:@"run command '%@' fail",command], EXIT_FAILURE);
+                }
+            }
+        }
+    }
+    
+    if (projectInfo.infoPlistPath.length > 0) {
+        NSString *command = [NSString stringWithFormat:@"/usr/libexec/PlistBuddy -c \"Set :%@ '%@'\" \"%@\"",
+                             kCFBundleDisplayNameKey,projectInfo.backDisplayName,projectInfo.infoPlistPath];
+        rs = runCommand(command, nil);
+        if (rs.status != TASK_SUCCSEE_VALUE) {
+            ssExit([NSString stringWithFormat:@"run command '%@' fail",command], EXIT_FAILURE);
+        }
+    }
+    
+    if (projectInfo.configPath.length > 0) {
         NSString *command = [NSString stringWithFormat:
                              @"cat %@ |grep \"#define kAppSign\"|sed \'s/#define kAppSign @\"\\(.*\\)\"/\\1/g\'",
-                             configPath];
-        NSString *oldSign = trim(runCommand(command, nil));
+                             projectInfo.configPath];
+        rs = runCommand(command, nil);
+        NSString *oldSign = rs.status == 0 ? rs.result.trim : nil;
         
-        NSString *newSign = [NSString stringWithUTF8String:original.appSign];
-        command = [NSString stringWithFormat:@"sed -ie 's/%@/%@/g' %@",oldSign,newSign,configPath];
-        runCommand(command, nil);
+        if (oldSign) {
+            command = [NSString stringWithFormat:@"sed -ie 's/%@/%@/g' %@",
+                       oldSign,projectInfo.backupAppSign,projectInfo.configPath];
+            rs = runCommand(command, nil);
+            
+            if (rs.status != TASK_SUCCSEE_VALUE) {
+                ssExit([NSString stringWithFormat:@"run command '%@' fail",command], EXIT_FAILURE);
+            }
+        }
+        else {
+            ssExit(@"get current appSign fail", EXIT_FAILURE);
+        }
     }
     
     //去掉sed命令的备份文件
-    NSString *path = [NSString stringWithFormat:@"%@e",configPath];
+    NSString *path = [NSString stringWithFormat:@"%@e",projectInfo.configPath];
     if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
     }
     
     //去掉backup文件夹
-    if ([[NSFileManager defaultManager] fileExistsAtPath:backupPath]) {
-        [[NSFileManager defaultManager] removeItemAtPath:backupPath error:nil];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:commandInfo.backupPath]) {
+        [[NSFileManager defaultManager] removeItemAtPath:commandInfo.backupPath error:nil];
     }
 }
 
-BOOL isChannelReiterant(struct Channel channel)
+CommandResult *runCommand(NSString *commandToRun,NSString *path)
 {
-    struct Channel storeChannel = channel;
-    if (channels.count > 0) {
-        for (NSValue *value in channels) {
-            struct Channel cl = {0,};
-            [value getValue:&cl];
+    NSMutableArray *commands = [NSMutableArray arrayWithObject:@"-c"];
+    
+    [commands addObject:commandToRun];
+    
+    NSTask *task = [[NSTask alloc] init];
+    [task setLaunchPath: @"/bin/sh"];
+    if (path.length > 0) {
+        [task setCurrentDirectoryPath:path];
+    }
+    [task setArguments: commands];
+    
+    NSPipe *pipe = [NSPipe pipe];
+    [task setStandardOutput: pipe];
+    
+    NSFileHandle *file = [pipe fileHandleForReading];
+    
+    [task launch];
+    [task waitUntilExit];
+    
+    int status = [task terminationStatus];
+    
+    NSData *data = [file readDataToEndOfFile];
+    
+    NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    
+    return [CommandResult resultWithStatus:status info:output];
+}
+
+BOOL isChannelReiterant(ChannelInfo *channel)
+{
+    ChannelInfo *info = nil;
+    for (info in commandInfo.channels) {
+        if ([info isEqual:channel]) {
             
-            if ([[NSString stringWithUTF8String:cl.displayName] isEqualToString:[NSString stringWithUTF8String:storeChannel.displayName]] &&
-                [[NSString stringWithUTF8String:cl.appSign] isEqualToString:[NSString stringWithUTF8String:storeChannel.appSign]]) {
-                
-                NSLog(@"\n‼️‼️‼️‼️重复配置‼️‼️‼️‼️\n"
-                      "///////information////////\n"
-                      "//path:%@\n"
-                      "//path:%@\n"
-                      "//里面的setting.plist配置重复，\n"
-                      "//请检查后重新运行脚本\n"
-                      "//////////////////////////",
-                      [NSString stringWithUTF8String:cl.pathName],
-                      [NSString stringWithUTF8String:storeChannel.pathName]);
-                
-                return YES;
+            NSLog(@"\n‼️‼️‼️‼️重复配置‼️‼️‼️‼️\n"
+                  "///////information////////\n"
+                  "//path:%@\n"
+                  "//path:%@\n"
+                  "//里面的setting.plist配置appSign重复，\n"
+                  "//请检查后重新运行脚本\n"
+                  "//////////////////////////",
+                  info.path,
+                  channel.path);
+            
+            return YES;
+        }
+    }
+    
+    return NO;
+}
+
+void ssExit(NSString *info, int status) {
+    NSLog(@"SSDisTool: %@\ncode %d",info,status);
+    exit(status);
+}
+
+void setupOutputPath(ChannelInfo *info) {
+    NSString *path = nil;
+    NSString *o_path = commandInfo.commandDic[kDisOutputOperation];
+    if (o_path.length > 0) {
+        path = [NSString stringWithFormat:@"%@/%@",o_path,kIpaPath].fullPath;
+    }
+    else {
+        if (info) {
+            o_path = [NSString stringWithFormat:@"%@/..",info.path].fullPath;
+            path = [NSString stringWithFormat:@"%@/%@",o_path,kIpaPath].fullPath;
+        }
+        else {
+            path = [NSString stringWithFormat:@"~/Desktop/%@",kIpaPath].fullPath;
+        }
+    }
+    
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        NSString *command = [NSString stringWithFormat:@"mkdir %@",path];
+        CommandResult *rs = runCommand(command, nil);
+        if (rs.status != TASK_SUCCSEE_VALUE) {
+            ssExit([NSString stringWithFormat:@"run command '%@' fail",command], EXIT_FAILURE);
+        }
+        else {
+            outputPath = info ? [NSString stringWithFormat:@"%@/%@",path,info.appSign] : [path copy];
+            
+            if (![[NSFileManager defaultManager] fileExistsAtPath:outputPath]) {
+                NSString *command = [NSString stringWithFormat:@"mkdir %@",outputPath];
+                CommandResult *rs = runCommand(command, nil);
+                if (rs.status != TASK_SUCCSEE_VALUE) {
+                    ssExit([NSString stringWithFormat:@"run command '%@' fail",command], EXIT_FAILURE);
+                }
             }
         }
     }
-    return NO;
+    else {
+        outputPath = info ? [NSString stringWithFormat:@"%@/%@",path,info.appSign] : [path copy];
+        
+        if (![[NSFileManager defaultManager] fileExistsAtPath:outputPath]) {
+            NSString *command = [NSString stringWithFormat:@"mkdir %@",outputPath];
+            CommandResult *rs = runCommand(command, nil);
+            if (rs.status != TASK_SUCCSEE_VALUE) {
+                ssExit([NSString stringWithFormat:@"run command '%@' fail",command], EXIT_FAILURE);
+            }
+        }
+    }
 }
 
 #pragma mark - Keychain
